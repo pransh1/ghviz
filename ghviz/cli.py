@@ -9,6 +9,7 @@ from ghviz.api.github_client import GitHubAPIError, GitHubClient, RateLimitError
 from ghviz.models.stats import RepoSummary, UserStats
 from ghviz.render.stats_render import render_user_stats
 from ghviz.render.tree_render import build_tree_from_github_paths, render_tree
+from ghviz.render.commit_render import build_commit_graph, render_commit_graph
 
 app = typer.Typer(
     name="ghviz",
@@ -70,6 +71,8 @@ def stats(username: str = typer.Argument(..., help="GitHub username to fetch sta
 def tree(
     repo: str = typer.Argument(..., help="Repo in owner/name format, e.g. torvalds/linux"),
     branch: str = typer.Option("HEAD", help="Branch to visualize"),
+    commits: bool = typer.Option(False, "--commits", help="Show commit history graph instead of file tree"),
+    limit: int = typer.Option(30, help="Max commits to show (only with --commits)"),
 ):
     """Show a repo's file tree as an interactive-style terminal tree."""
     if "/" not in repo:
@@ -79,6 +82,15 @@ def tree(
     owner, repo_name = repo.split("/", 1)
     client = GitHubClient()
     try:
+        if commits:
+            with console.status(f"[bold cyan]Fetching commit history for {repo}..."):
+                raw_commits = client.get_repo_commits(owner, repo_name, per_page=min(limit, 100))
+
+            commit_nodes = build_commit_graph(raw_commits)
+            console.print(f"[bold cyan]{repo}[/bold cyan] — commit history\n")
+            console.print(render_commit_graph(commit_nodes, limit=limit))
+            return
+        
         with console.status(f"[bold cyan]Fetching tree for {repo}..."):
             raw_tree = client.get_repo_tree(owner, repo_name, branch=branch)
 
