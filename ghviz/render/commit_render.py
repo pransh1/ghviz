@@ -31,13 +31,16 @@ def build_commit_graph(raw_commits: list[dict]) -> list[CommitNode]:
     for c in raw_commits:
         commit_info = c.get("commit", {})
         author_info = commit_info.get("author", {}) or {}
+        full_message = commit_info.get("message", "")
         parents = [p["sha"] for p in c.get("parents", [])]
 
         nodes.append(
             CommitNode(
                 sha=c["sha"],
                 message=commit_info.get("message", "").split("\n")[0],  # first line only
+                full_message=full_message,
                 author=author_info.get("name", "unknown"),
+                email=author_info.get("email", ""),
                 date=author_info.get("date", ""),
                 parents=parents,
             )

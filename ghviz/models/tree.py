@@ -21,6 +21,8 @@ class CommitNode:
 
     sha: str
     message: str
+    full_message: str
     author: str
+    email: str
     date: str
     parents: list[str] = field(default_factory=list)
