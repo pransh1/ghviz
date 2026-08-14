@@ -8,15 +8,18 @@ from rich.console import Console
 from ghviz.api.github_client import GitHubAPIError, GitHubClient, RateLimitError
 from ghviz.models.stats import RepoSummary, UserStats
 from ghviz.render.stats_render import render_user_stats
+from ghviz.render.term_utils import real_terminal_width
 from ghviz.render.tree_render import build_tree_from_github_paths, render_tree
 from ghviz.render.commit_render import build_commit_graph, render_commit_graph
+# from ghviz.render.commit_render import build_commit_graph
+from ghviz.render.graph_render import render_git_log_style
 
 app = typer.Typer(
     name="ghviz",
     help="Visualize GitHub stats and repo trees, right in your terminal.",
     add_completion=False,
 )
-console = Console()
+console = Console(width=real_terminal_width())
 
 
 @app.command()
@@ -72,9 +75,9 @@ def tree(
     repo: str = typer.Argument(..., help="Repo in owner/name format, e.g. torvalds/linux"),
     branch: str = typer.Option("HEAD", help="Branch to visualize"),
     commits: bool = typer.Option(False, "--commits", help="Show commit history graph instead of file tree"),
-    limit: int = typer.Option(30, help="Max commits to show (only with --commits)"),
+    limit: int = typer.Option(100, help="Max commits to show (only with --commits)"),
 ):
-    """Show a repo's file tree as an interactive-style terminal tree."""
+    """Show a repo's file tree, or its commit history graph with --commits."""
     if "/" not in repo:
         console.print("[bold red]Error:[/bold red] repo must be in 'owner/name' format")
         raise typer.Exit(code=1)
@@ -84,19 +87,36 @@ def tree(
     try:
         if commits:
             with console.status(f"[bold cyan]Fetching commit history for {repo}..."):
-                raw_commits = client.get_repo_commits(owner, repo_name, per_page=min(limit, 100))
+                raw_commits = client.get_repo_commits(owner, repo_name, max_total=limit)
+                raw_branches = client.get_repo_branches(owner, repo_name)
+                repo_info = client.get_repo(owner, repo_name)
 
             commit_nodes = build_commit_graph(raw_commits)
-            console.print(f"[bold cyan]{repo}[/bold cyan] — commit history\n")
-            console.print(render_commit_graph(commit_nodes, limit=limit))
+
+            refs: dict[str, list[str]] = {}
+            for b in raw_branches:
+                sha = b.get("commit", {}).get("sha")
+                if sha:
+                    refs.setdefault(sha, []).append(b["name"])
+
+            default_branch = repo_info.get("default_branch")
+
+            # console.print(render_git_log_style(commit_nodes, limit=limit, refs=refs, default_branch=default_branch))
+            output = render_git_log_style(commit_nodes, limit=limit, refs=refs, default_branch=default_branch)
+            console.print(output, soft_wrap=True)
             return
-        
+
         with console.status(f"[bold cyan]Fetching tree for {repo}..."):
             raw_tree = client.get_repo_tree(owner, repo_name, branch=branch)
 
         root_node = build_tree_from_github_paths(raw_tree)
         rich_tree = render_tree(root_node, label=f"[bold cyan]{repo}[/bold cyan]")
-        console.print(rich_tree)
+        console.print(rich_tree, soft_wrap=True)
+        # if console.is_terminal:
+        #     with console.pager(styles=True):
+        #         console.print(rich_tree)
+        # else:
+        #     console.print(rich_tree)
 
     except RateLimitError as e:
         console.print(f"[bold red]Rate limit hit:[/bold red] {e}")

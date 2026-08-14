@@ -80,8 +80,27 @@ class GitHubClient:
     def get_repo_languages(self, owner: str, repo: str) -> dict:
         return self._get(f"/repos/{owner}/{repo}/languages")
 
-    def get_repo_commits(self, owner: str, repo: str, per_page: int = 100) -> list[dict]:
-        return self._get(f"/repos/{owner}/{repo}/commits", params={"per_page": per_page})
+    def get_repo_commits(self, owner: str, repo: str, max_total: int = 100) -> list[dict]:
+        """Fetch up to max_total commits, paginating past GitHub's 100-per-request cap."""
+        all_commits: list[dict] = []
+        page = 1
+        per_page = 100  # GitHub's hard max per request
+
+        while len(all_commits) < max_total:
+            batch = self._get(
+                f"/repos/{owner}/{repo}/commits", params={"per_page": per_page, "page": page}
+            )
+            if not batch:
+                break  # no more commits left in history
+            all_commits.extend(batch)
+            if len(batch) < per_page:
+                break  # that was the last page
+            page += 1
+
+        return all_commits[:max_total]
+    
+    def get_repo_branches(self, owner: str, repo: str, per_page: int = 100) -> list[dict]:
+        return self._get(f"/repos/{owner}/{repo}/branches", params={"per_page":per_page})
 
     def get_repo_tree(self, owner: str, repo: str, branch: str = "HEAD") -> dict:
         # recursive=1 pulls the full tree in one call (capped at GitHub's size limits)
