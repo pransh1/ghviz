@@ -14,7 +14,15 @@ from ghviz.render.tree_render import build_tree_from_github_paths, render_tree, 
 from ghviz.render.commit_render import build_commit_graph, render_commit_graph
 # from ghviz.render.commit_render import build_commit_graph
 from ghviz.render.graph_render import render_git_log_style
-from ghviz.api.local_git import LocalGitError, get_local_commits, get_local_tracked_files, is_git_repo
+# from ghviz.api.local_git import LocalGitError, get_local_commits, get_local_tracked_files, is_git_repo
+from ghviz.api.local_git import (
+    LocalGitError,
+    get_local_commits,
+    get_local_language_breakdown,
+    get_local_tracked_files,
+    is_git_repo,
+)
+from ghviz.render.local_stats_render import render_local_stats
 
 app = typer.Typer(
     name="ghviz",
@@ -25,8 +33,34 @@ console = Console(width=real_terminal_width())
 
 
 @app.command()
-def stats(username: str = typer.Argument(..., help="GitHub username to fetch stats for")):
-    """Show GitHub stats for a user: repo count, followers, top repos, language breakdown."""
+def stats(
+    username: str = typer.Argument(None, help="GitHub username to fetch stats for (omit when using --local)"),
+    local: bool = typer.Option(False, "--local", help="Show stats for the local git repo in the current directory"),
+):
+    """Show GitHub stats for a user, or local repo stats with --local:
+    repo count, followers, top repos, language breakdown."""
+
+    if local:
+        if not is_git_repo("."):
+            console.print("[bold red]Error:[/bold red] current directory is not a git repository")
+            raise typer.Exit(code=1)
+
+        try:
+            with console.status("[bold cyan]Reading local repo stats..."):
+                commit_nodes = get_local_commits(".", limit=None)  # full history for accurate stats
+                language_breakdown = get_local_language_breakdown(".")
+
+            repo_label = os.path.basename(os.path.abspath("."))
+            render_local_stats(repo_label, commit_nodes, language_breakdown)
+        except LocalGitError as e:
+            console.print(f"[bold red]Error:[/bold red] {e}")
+            raise typer.Exit(code=1)
+        return
+
+    if not username:
+        console.print("[bold red]Error:[/bold red] username required (or pass --local)")
+        raise typer.Exit(code=1)
+
     client = GitHubClient()
     try:
         with console.status(f"[bold cyan]Fetching stats for {username}..."):
