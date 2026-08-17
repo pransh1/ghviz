@@ -26,3 +26,4 @@ class CommitNode:
     email: str
     date: str
     parents: list[str] = field(default_factory=list)
+    decoration: str = ""

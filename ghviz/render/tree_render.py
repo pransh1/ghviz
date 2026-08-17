@@ -37,6 +37,29 @@ def build_tree_from_github_paths(raw_tree: dict) -> TreeNode:
 
     return root
 
+def build_tree_from_paths(paths: list[str]) -> TreeNode:
+    """Build a nested TreeNode structure from a flat list of file paths
+    (e.g. from `git ls-files`), synthesizing intermediate directory nodes
+    as needed — unlike GitHub's API, `git ls-files` gives us files only.
+    """
+    root = TreeNode(name="/", path="", is_dir=True)
+    nodes: dict[str, TreeNode] = {"": root}
+
+    for path in sorted(paths):
+        parts = path.split("/")
+        current_path = ""
+        parent = root
+        for i, part in enumerate(parts):
+            current_path = f"{current_path}/{part}" if current_path else part
+            is_last = i == len(parts) - 1
+            if current_path not in nodes:
+                node = TreeNode(name=part, path=current_path, is_dir=not is_last)
+                nodes[current_path] = node
+                parent.children.append(node)
+            parent = nodes[current_path]
+
+    return root
+
 
 def render_tree(node: TreeNode, label: str | None = None) -> Tree:
     """Recursively build a rich.Tree for terminal rendering."""
