@@ -154,95 +154,137 @@ def _prefix(snapshot: list, dot_col: int | None = None, dot_symbol: str = DOT,
     return text
 
 
+# def _format_git_date(iso_date: str) -> str:
+#     if not iso_date:
+#         return ""
+#     try:
+#         dt = datetime.strptime(iso_date, "%Y-%m-%dT%H:%M:%SZ")
+#         return dt.strftime("%a %b %d %H:%M:%S %Y +0000")
+#     except ValueError:
+#         return iso_date
+
 def _format_git_date(iso_date: str) -> str:
     if not iso_date:
         return ""
     try:
-        dt = datetime.strptime(iso_date, "%Y-%m-%dT%H:%M:%SZ")
-        return dt.strftime("%a %b %d %H:%M:%S %Y +0000")
+        normalized = iso_date.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+        return dt.strftime("%a %b %d %H:%M:%S %Y %z")
     except ValueError:
         return iso_date
+    
+
+def _parse_local_decoration(decoration: str) -> list[tuple[str, str]]:
+    """Parse git's raw `%D` ref string (e.g. 'HEAD -> main, origin/main, tag: v1.0')
+    into (label, style) pairs, matching git's own real coloring convention."""
+    if not decoration:
+        return []
+    parts = [p.strip() for p in decoration.split(",") if p.strip()]
+    result = []
+    for p in parts:
+        if p.startswith("HEAD -> "):
+            result.append((p, "bold green"))
+        elif p == "HEAD":
+            result.append((p, "bold cyan"))
+        elif p.startswith("tag: "):
+            result.append((p, "bold yellow"))
+        elif "/" in p:
+            result.append((p, "bold red"))  # remote-tracking branch
+        else:
+            result.append((p, "bold green"))  # other local branch
+    return result
 
 
-def render_git_log_style(nodes: list[CommitNode], limit: int = 30, refs: dict[str, list[str]] | None = None,
-                        default_branch: str | None = None) -> Group:
-  """Render commits as detailed multi-line blocks, matching `git log --graph` output:
-  commit header (with branch decorations), Merge: line (for merges), Author, Date,
-  blank, full message, blank.
-  """
-  refs = refs or {}
-  rows = build_lane_rows(nodes[:limit])
-  lines: list[Text] = []
+def render_git_log_style(
+    nodes: list[CommitNode],
+    limit: int = 30,
+    refs: dict[str, list[str]] | None = None,
+    default_branch: str | None = None,
+) -> Group:
+    """Render commits as detailed multi-line blocks, matching `git log --graph` output:
+    commit header (with branch decorations), Merge: line (for merges), Author, Date,
+    blank, full message, blank.
+    """
+    refs = refs or {}
+    rows = build_lane_rows(nodes[:limit])
+    lines: list[Text] = []
 
-  for row in rows:
-      node = row.node
-      is_merge = len(node.parents) > 1
-      symbol = MERGE_DOT if is_merge else DOT
+    for row in rows:
+        node = row.node
+        is_merge = len(node.parents) > 1
+        symbol = MERGE_DOT if is_merge else DOT
 
-      # --- Header line: "* commit <full sha> (branch, branch, ...)" ---
-      header = _prefix(row.header_snapshot, dot_col=row.lane_idx, dot_symbol=symbol)
-      header.append("commit ", style="bold yellow")
-      header.append(node.sha, style="bold yellow")
+        # --- Header line: "* commit <full sha> (branch, branch, ...)" ---
+        header = _prefix(row.header_snapshot, dot_col=row.lane_idx, dot_symbol=symbol)
+        header.append("commit ", style="bold yellow")
+        header.append(node.sha, style="bold yellow")
 
-      branch_names = refs.get(node.sha, [])
-      if branch_names:
-          decorated = []
-          for name in branch_names:
-              if name == default_branch:
-                  decorated.append(("HEAD -> " + name, "bold green"))
-              else:
-                  decorated.append((f"origin/{name}", "bold red"))
-          header.append(" (", style="white")
-          for i, (label, style) in enumerate(decorated):
-              if i > 0:
-                  header.append(", ", style="white")
-              header.append(label, style=style)
-          header.append(")", style="white")
-      lines.append(header)
+        branch_names = refs.get(node.sha, [])
+        decorated: list[tuple[str, str]] = []
+        if node.decoration:
+            decorated = _parse_local_decoration(node.decoration)
+        elif branch_names:
+            if default_branch in branch_names:
+                decorated.append(("origin/HEAD", "bold cyan"))
+            for name in branch_names:
+                decorated.append((f"origin/{name}", "bold red"))
 
-      # Queue of (snapshot, override) pairs for the first N continuation lines —
-      # this is what draws the "\" branch-open and "/" branch-close transition rows.
-      special = []
-      if row.open_transition:
-          special.append(row.open_transition)
-      if row.close_transition:
-          special.append(row.close_transition)
+        if decorated:
+            header.append(" (", style="white")
+            for i, (label, style) in enumerate(decorated):
+                if i > 0:
+                    header.append(", ", style="white")
+                header.append(label, style=style)
+            header.append(")", style="white")
+        lines.append(header)
 
-      def next_prefix():
-          if special:
-              snap, (sym, col) = special.pop(0)
-              return _prefix(snap, override_col=col, override_symbol=sym)
-          return _prefix(row.detail_snapshot)
+        # Queue of (snapshot, override) pairs for the first N continuation lines —
+        # this is what draws the "\" branch-open and "/" branch-close transition rows.
+        special = []
+        if row.open_transition:
+            special.append(row.open_transition)
+        if row.close_transition:
+            special.append(row.close_transition)
 
-      if is_merge:
-          merge_line = next_prefix()
-          merge_line.append("Merge: ", style="bold")
-          merge_line.append(" ".join(p[:7] for p in node.parents), style="white")
-          lines.append(merge_line)
+        def next_prefix():
+            if special:
+                snap, (sym, col) = special.pop(0)
+                return _prefix(snap, override_col=col, override_symbol=sym)
+            return _prefix(row.detail_snapshot)
 
-      author_line = next_prefix()
-      author_display = f"{node.author} <{node.email}>" if node.email else node.author
-      author_line.append("Author: ", style="bold")
-      author_line.append(author_display, style="white")
-      lines.append(author_line)
+        if is_merge:
+            merge_line = next_prefix()
+            merge_line.append("Merge: ", style="bold")
+            merge_line.append(" ".join(p[:7] for p in node.parents), style="white")
+            lines.append(merge_line)
 
-      date_line = next_prefix()
-      date_line.append("Date:   ", style="bold")
-      date_line.append(_format_git_date(node.date), style="white")
-      lines.append(date_line)
+        author_line = next_prefix()
+        author_display = f"{node.author} <{node.email}>" if node.email else node.author
+        author_line.append("Author: ", style="bold")
+        author_line.append(author_display, style="white")
+        lines.append(author_line)
 
-      lines.append(next_prefix())  # blank connector line before the message
+        date_line = next_prefix()
+        date_line.append("Date:   ", style="bold")
+        date_line.append(_format_git_date(node.date), style="white")
+        lines.append(date_line)
 
-      message_lines = node.full_message.split("\n") if node.full_message else [node.message]
-      for msg_line in message_lines:
-          body = next_prefix()
-          if msg_line:
-              body.append(f"    {msg_line}", style="white")
-          lines.append(body)
+        lines.append(next_prefix())  # blank connector line before the message
 
-      lines.append(next_prefix())  # blank separator between commits
+        message_lines = (
+            node.full_message.split("\n") if node.full_message else [node.message]
+        )
+        for msg_line in message_lines:
+            body = next_prefix()
+            if msg_line:
+                body.append(f"    {msg_line}", style="white")
+            lines.append(body)
 
-  if len(nodes) > limit:
-      lines.append(Text(f"... {len(nodes) - limit} more commits not shown", style="dim italic"))
+        lines.append(next_prefix())  # blank separator between commits
 
-  return Group(*lines)
+    if len(nodes) > limit:
+        lines.append(
+            Text(f"... {len(nodes) - limit} more commits not shown", style="dim italic")
+        )
+
+    return Group(*lines)

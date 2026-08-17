@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import typer
 from rich.console import Console
+import os
 
 from ghviz.api.github_client import GitHubAPIError, GitHubClient, RateLimitError
 from ghviz.models.stats import RepoSummary, UserStats
 from ghviz.render.stats_render import render_user_stats
 from ghviz.render.term_utils import real_terminal_width
-from ghviz.render.tree_render import build_tree_from_github_paths, render_tree
+from ghviz.render.tree_render import build_tree_from_github_paths, render_tree, build_tree_from_paths
 from ghviz.render.commit_render import build_commit_graph, render_commit_graph
 # from ghviz.render.commit_render import build_commit_graph
 from ghviz.render.graph_render import render_git_log_style
+from ghviz.api.local_git import LocalGitError, get_local_commits, get_local_tracked_files, is_git_repo
 
 app = typer.Typer(
     name="ghviz",
@@ -72,14 +74,44 @@ def stats(username: str = typer.Argument(..., help="GitHub username to fetch sta
 
 @app.command()
 def tree(
-    repo: str = typer.Argument(..., help="Repo in owner/name format, e.g. torvalds/linux"),
-    branch: str = typer.Option("HEAD", help="Branch to visualize"),
+    repo: str = typer.Argument(None, help="Repo in owner/name format (omit when using --local)"),
+    branch: str = typer.Option("HEAD", help="Branch to visualize (GitHub mode only)"),
     commits: bool = typer.Option(False, "--commits", help="Show commit history graph instead of file tree"),
     limit: int = typer.Option(100, help="Max commits to show (only with --commits)"),
+    local: bool = typer.Option(
+        False, "--local", help="Read the local .git repo in the current directory instead of GitHub"
+    ),
 ):
-    """Show a repo's file tree, or its commit history graph with --commits."""
-    if "/" not in repo:
-        console.print("[bold red]Error:[/bold red] repo must be in 'owner/name' format")
+    """Show a repo's file tree, or its commit history graph with --commits.
+    Use --local to read your current directory's git repo directly, with real HEAD/branch info."""
+
+    if local:
+        if not is_git_repo("."):
+            console.print("[bold red]Error:[/bold red] current directory is not a git repository")
+            raise typer.Exit(code=1)
+
+        try:
+            if commits:
+                with console.status("[bold cyan]Reading local commit history..."):
+                    commit_nodes = get_local_commits(".", limit=limit)
+                output = render_git_log_style(commit_nodes, limit=limit)
+                console.print(output, soft_wrap=True)
+                return
+
+            with console.status("[bold cyan]Reading local file tree..."):
+                tracked_files = get_local_tracked_files(".")
+            root_node = build_tree_from_paths(tracked_files)
+            repo_label = os.path.basename(os.path.abspath("."))
+            rich_tree = render_tree(root_node, label=f"[bold cyan]{repo_label}[/bold cyan] (local)")
+            console.print(rich_tree, soft_wrap=True)
+            return
+
+        except LocalGitError as e:
+            console.print(f"[bold red]Error:[/bold red] {e}")
+            raise typer.Exit(code=1)
+
+    if not repo or "/" not in repo:
+        console.print("[bold red]Error:[/bold red] repo must be in 'owner/name' format (or pass --local)")
         raise typer.Exit(code=1)
 
     owner, repo_name = repo.split("/", 1)
@@ -101,7 +133,6 @@ def tree(
 
             default_branch = repo_info.get("default_branch")
 
-            # console.print(render_git_log_style(commit_nodes, limit=limit, refs=refs, default_branch=default_branch))
             output = render_git_log_style(commit_nodes, limit=limit, refs=refs, default_branch=default_branch)
             console.print(output, soft_wrap=True)
             return
@@ -112,11 +143,6 @@ def tree(
         root_node = build_tree_from_github_paths(raw_tree)
         rich_tree = render_tree(root_node, label=f"[bold cyan]{repo}[/bold cyan]")
         console.print(rich_tree, soft_wrap=True)
-        # if console.is_terminal:
-        #     with console.pager(styles=True):
-        #         console.print(rich_tree)
-        # else:
-        #     console.print(rich_tree)
 
     except RateLimitError as e:
         console.print(f"[bold red]Rate limit hit:[/bold red] {e}")
