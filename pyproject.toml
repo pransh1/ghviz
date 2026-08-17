@@ -1,12 +1,26 @@
 [project]
 name = "ghviz"
 version = "0.1.0"
-description = "A terminal CLI to visualize GitHub stats and repo/commit trees, right in your terminal."
+description = "A terminal CLI to visualize GitHub stats and repo file trees and commit graphs, right in your terminal."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [
-    { name = "Pransh Maurya" }
+    { name = "pransh1", email = "mauryapransh2@gmail.com" }
+]
+keywords = ["github", "cli", "git", "terminal", "visualization", "commit-graph"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Version Control :: Git",
+    "Topic :: Utilities",
 ]
 dependencies = [
     "typer>=0.12.0",
@@ -15,11 +29,16 @@ dependencies = [
     "python-dotenv>=1.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/pransh1/ghviz"
+Repository = "https://github.com/pransh1/ghviz"
+Issues = "https://github.com/pransh1/ghviz/issues"
+
 [project.scripts]
 ghviz = "ghviz.cli:app"
 
 [project.optional-dependencies]
-dev=["pytest>=8.0.0"]
+dev = ["pytest>=8.0.0"]
 
 [build-system]
 requires = ["hatchling"]
